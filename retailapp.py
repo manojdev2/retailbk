@@ -12,6 +12,8 @@ genai.configure(api_key='AIzaSyDUUsTEvKKRya7u46jEJw4OMwFZ3dRKIRs')
 app = Flask(__name__)
 CORS(app)
 
+location_data = pd.read_csv('data/locations.csv')
+
 # Database connection function
 def get_db_connection():
     conn = psycopg2.connect(
@@ -48,6 +50,12 @@ def create_tables():
             economic_conditions TEXT
         )
     ''')
+    # Create slots data table
+    cursor.execute('''CREATE TABLE IF NOT EXISTS slots (
+                        id SERIAL PRIMARY KEY,
+                        date DATE,
+                        time VARCHAR(50),
+                        available INTEGER)''')
 
     # Create customer table
     cursor.execute('''
@@ -212,6 +220,59 @@ def adjust_inventory():
     cursor.close()
     conn.close()
 
+def populate_slots():
+    """Populates the delivery slots table with dummy data."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    slots = [
+        ('2024-10-01', '10:00 - 12:00', 1),
+        ('2024-10-01', '12:00 - 14:00', 1),
+        ('2024-10-02', '14:00 - 16:00', 1),
+    ]
+    insert_query = '''INSERT INTO slots (date, time, available) VALUES (%s, %s, %s)'''
+    cursor.executemany(insert_query, slots)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def get_available_slots():
+    """Fetches available delivery slots from PostgreSQL."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, date, time FROM slots WHERE available = 1")
+    slots = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return slots
+
+def recommend_optimal_slots(user_location):
+    """Recommends optimal delivery slots using Google Generative AI."""
+    prompt = f"Based on the user's location at {user_location}, recommend the most optimal delivery slots."
+    
+    gem_model = genai.GenerativeModel("gemini-1.5-flash")
+    
+    try:
+        response = gem_model.generate_content(prompt)
+        if response and hasattr(response, 'text'):
+            return response.text.strip()
+        else:
+            return "No recommendation could be generated."
+    except Exception as e:
+        print(f"Error generating content: {e}")
+        return None
+
+def score_locations(df):
+    df['score'] = (
+        df['population_density'] * 0.3 +
+        df['income_level'] * 0.2 +
+        df['competitors_nearby'] * -0.1 +
+        df['traffic_score'] * 0.15 +
+        df['public_transport_score'] * 0.1 +
+        df['avg_rent'] * -0.1 +
+        df['avg_shop_size'] * 0.05
+    )
+    return df.sort_values(by='score', ascending=False).head(5)
+
 # Flask API Endpoints
 
 @app.route('/api/inventory', methods=['GET'])
@@ -226,9 +287,18 @@ def get_inventory():
 
 @app.route('/api/get_inventory', methods=['GET'])
 def get_inventorydata():
-    conn = sqlite3.connect('inventory.db')
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM inventory')
+    rows = cursor.fetchall()
+    conn.close()
+    return jsonify(rows)
+
+@app.route('/api/get_sales_data', methods=['GET'])
+def get_sales_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM sales_data')
     rows = cursor.fetchall()
     conn.close()
     return jsonify(rows)
@@ -252,6 +322,59 @@ def generate_insights_route():
     insights = generate_insight(customer_data)
     return jsonify({'insights': insights})
 
+@app.route('/api/optimal-locations', methods=['POST'])
+def optimal_locations():
+    request_data = request.json
+    category = request_data.get('category')
+    budget = request_data.get('budget')
+
+    # Score locations based on the weighted criteria
+    top_locations = score_locations(location_data)
+
+    # Generate a business recommendation using Google Gemini
+    prompt = f"Suggest the best location to open a new {category} store based on these top-scoring areas: {top_locations.to_dict(orient='records')}. The business has a budget of {budget}."
+
+    # Specify the model when creating a ChatSession
+    model = "gemini-1.5-pro"  # Replace with the desired model name
+    #chat_session = gemini.ChatSession(model=model)  # Create a new chat session with the specified model
+
+    # Generate the response directly with the prompt
+    #gemini_response = chat_session.generate(prompt=prompt)
+
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(f"Suggest the best location to open a new {category} store based on these top-scoring areas: {top_locations.to_dict(orient='records')}. The business has a budget of {budget}.")
+
+    return jsonify({
+        'top_locations': top_locations[['latitude', 'longitude', 'score', 'avg_rent', 'traffic_score']].to_dict(orient='records'),
+        'gemini_recommendation': response.text.strip()  # Ensure to access the correct attribute
+    })
+
+@app.route('/api/available-slots', methods=['GET'])
+def available_slots():
+    """API endpoint to fetch available delivery slots."""
+    slots = get_available_slots()
+    user_location = request.args.get('location')
+    
+    recommended_slots = recommend_optimal_slots(user_location)
+    
+    return jsonify({
+        "available_slots": slots,
+        "recommended_slots": recommended_slots
+    })
+
+@app.route('/api/reserve-slot', methods=['POST'])
+def reserve_slot():
+    """API endpoint to reserve a delivery slot."""
+    slot_id = request.json.get('slot_id')
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE slots SET available = 0 WHERE id = %s", (slot_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"status": "success", "message": "Slot reserved successfully!"})
+
 if __name__ == '__main__':
     create_tables()
+    populate_slots()
     app.run(debug=True)
