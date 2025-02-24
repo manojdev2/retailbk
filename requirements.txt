@@ -9,3 +9,4 @@ gunicorn==21.2.0            # For deploying the Flask app in production
 psycopg2
 flask-cors
 google-generativeai
+googlemaps==4.10.0
