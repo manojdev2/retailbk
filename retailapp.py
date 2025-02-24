@@ -85,7 +85,7 @@ def reallocate_stock():
                     else:
                         profit = 0  # No profit if the source store's price is higher or equal
 
-                    recommendation = get_reallocation_recommendation(row['id'], amount_to_reallocate, nearby_row['demand'])
+                    recommendation = get_reallocation_recommendation(row['store_id'], amount_to_reallocate, nearby_row['demand'])
                     
                     reallocation_decisions.append({
                         'from_store': row['store_id'],
