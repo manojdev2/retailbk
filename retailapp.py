@@ -60,6 +60,41 @@ def get_reallocation_recommendation(store_id, excess_inventory, demand):
     except Exception as e:
         return f"Error in recommendation: {str(e)}"
 
+
+
+def calculate_route_and_cost(start_location, end_location, amount_to_reallocate):
+    try:
+        directions_result = gmaps.directions(
+            (start_location['lat'], start_location['lon']),
+            (end_location['lat'], end_location['lon']),
+            mode="driving",
+            units="metric"
+        )
+
+        if directions_result and len(directions_result) > 0:
+            route = directions_result[0]
+            leg = route['legs'][0]
+            travel_distance = leg['distance']['value'] / 1000  # Distance in kilometers
+            travel_time = leg['duration']['value'] / 60  # Time in minutes
+
+            cost_per_km = 2.0  # Adjust based on your costs
+            transport_cost = travel_distance * cost_per_km * amount_to_reallocate
+            
+            # Example carbon footprint calculation: 0.1 kg CO2 per km per unit
+            carbon_footprint = travel_distance * 0.1 * amount_to_reallocate
+            
+            return {
+                'distance_km': travel_distance,
+                'travel_time_min': travel_time,
+                'transport_cost': transport_cost,
+                'carbon_footprint': carbon_footprint,
+                'route_polyline': route['overview_polyline']['points']
+            }
+        else:
+            return {'error': 'No route found'}
+    except Exception as e:
+        return {'error': f"Error calculating route: {str(e)}"}
+
 @app.route('/api/reallocate_stock', methods=['POST'])
 def reallocate_stock():
     global store_data
@@ -85,8 +120,31 @@ def reallocate_stock():
                     else:
                         profit = 0  # No profit if the source store's price is higher or equal
 
-                    recommendation = get_reallocation_recommendation(row['store_id'], amount_to_reallocate, nearby_row['demand'])
-                    
+                    # recommendation = get_reallocation_recommendation(row['store_id'], amount_to_reallocate, nearby_row['demand'])
+                    route_info = calculate_route_and_cost(start_location, end_location, amount_to_reallocate)
+
+                    if 'error' not in route_info:
+                        recommendation = get_reallocation_recommendation(
+                            row['store_id'], amount_to_reallocate, nearby_row['demand']
+                        )
+
+                        reallocation_decisions.append({
+                            'from_store': row['store_id'],
+                            'to_store': nearby_row['store_id'],
+                            'from_store_name': row['hospital_name'],
+                            'to_store_name': nearby_row['hospital_name'],
+                            'brand': row['brand'],
+                            'item_category': row['item_category'],
+                            'amount': amount_to_reallocate,
+                            'profit': profit,
+                            'transport_cost': route_info['transport_cost'],
+                            'travel_time_min': route_info['travel_time_min'],
+                            'distance_km': route_info['distance_km'],
+                            'carbon_footprint': route_info['carbon_footprint'],
+                            'route_polyline': route_info['route_polyline'],
+                            'recommendation': recommendation
+                        })
+
                     reallocation_decisions.append({
                         'from_store': row['store_id'],
                         'to_store': nearby_row['store_id'],
@@ -96,6 +154,12 @@ def reallocate_stock():
                         'amount': amount_to_reallocate,
                         'recommendation': recommendation,
                         'profit': profit
+                         'transport_cost': route_info['transport_cost'],
+                            'travel_time_min': route_info['travel_time_min'],
+                            'distance_km': route_info['distance_km'],
+                            'carbon_footprint': route_info['carbon_footprint'],
+                            'route_polyline': route_info['route_polyline'],
+                            'recommendation': recommendation
                     })
                    
                     # Update inventories
@@ -147,7 +211,7 @@ def reallocate_stock():
 #                         'brand': row['brand'],
 #                         'amount': amount_to_reallocate,
 #                         'recommendation': recommendation,
-#                         'profit': profit
+#                         'profit': profit,
 #                     })
 
 #                     # Update inventories
