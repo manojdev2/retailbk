@@ -4,12 +4,14 @@ import numpy as np
 from flask_cors import CORS
 import google.generativeai as genai
 import psycopg2
+import googlemaps
 from sklearn.ensemble import RandomForestRegressor
 
 app = Flask(__name__)
 CORS(app)
 
 genai.configure(api_key='AIzaSyCn43FyMu0k4TpBrrXVo1KNRtPR1JuUoF4')
+gmaps = googlemaps.Client(key="AIzaSyDAUhNkL--7MVKHtlFuR3acwa7ED-cIoAU")
 
 def get_db_connection():
     conn = psycopg2.connect(
@@ -59,7 +61,57 @@ def get_reallocation_recommendation(store_id, excess_inventory, demand):
         return response.text
     except Exception as e:
         return f"Error in recommendation: {str(e)}"
+    
+def calculate_route_and_cost(start_location, end_location, amount_to_reallocate):
+    try:
+        directions_result = gmaps.directions(
+            (start_location['lat'], start_location['lon']),
+            (end_location['lat'], end_location['lon']),
+            mode="driving",
+            units="metric"
+        )
 
+        if directions_result and len(directions_result) > 0:
+            route = directions_result[0]
+            leg = route['legs'][0]
+            travel_distance = leg['distance']['value'] / 1000  # Distance in kilometers
+            travel_time = leg['duration']['value'] / 60  # Time in minutes
+
+            cost_per_km = 2.0  # Adjust based on your costs
+            transport_cost = travel_distance * cost_per_km * amount_to_reallocate
+
+            # Example carbon footprint calculation: 0.1 kg CO2 per km per unit
+            carbon_footprint = travel_distance * 0.1 * amount_to_reallocate
+
+            return {
+                'distance_km': travel_distance,
+                'travel_time_min': travel_time,
+                'transport_cost': transport_cost,
+                'carbon_footprint': carbon_footprint,
+                'route_polyline': route.get('overview_polyline', {}).get('points', '')
+            }
+        else:
+            # Assign default fallback values when no route is found
+            return {
+                'error': 'No route found',
+                'distance_km': 0,
+                'travel_time_min': 0,
+                'transport_cost': 0,
+                'carbon_footprint': 0,
+                'route_polyline': ''
+            }
+    except Exception as e:
+        # Return default values in case of any exception
+        return {
+            'error': f"Error calculating route: {str(e)}",
+            'distance_km': 0,
+            'travel_time_min': 0,
+            'transport_cost': 0,
+            'carbon_footprint': 0,
+            'route_polyline': ''
+        }
+
+    
 @app.route('/api/reallocate_stock', methods=['POST'])
 def reallocate_stock():
     global store_data
@@ -85,7 +137,11 @@ def reallocate_stock():
                     else:
                         profit = 0  # No profit if the source store's price is higher or equal
 
-                    recommendation = get_reallocation_recommendation(row['id'], amount_to_reallocate, nearby_row['demand'])
+                    recommendation = get_reallocation_recommendation(row['store_id'], amount_to_reallocate, nearby_row['demand'])
+
+                    start_location = {'lat': row['location_x'], 'lon': row['location_y']}
+                    end_location = {'lat': nearby_row['location_x'], 'lon': nearby_row['location_y']}
+                    route_info = calculate_route_and_cost(start_location, end_location, amount_to_reallocate);
                     
                     reallocation_decisions.append({
                         'from_store': row['store_id'],
@@ -95,6 +151,11 @@ def reallocate_stock():
                         'brand':row['brand'],
                         'amount': amount_to_reallocate,
                         'recommendation': recommendation,
+                        'transport_cost': route_info['transport_cost'],
+                        'travel_time_min': route_info['travel_time_min'],
+                        'distance_km': route_info['distance_km'],
+                        'carbon_footprint': route_info['carbon_footprint'],
+                        'route_polyline': route_info['route_polyline'],
                         'profit': profit
                     })
                    
