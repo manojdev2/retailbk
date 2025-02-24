@@ -88,19 +88,19 @@ def reallocate_stock():
                     recommendation = get_reallocation_recommendation(row['id'], amount_to_reallocate, nearby_row['demand'])
                     
                     reallocation_decisions.append({
-                        'from_store': row['id'],
-                        'to_store': nearby_row['id'],
-                        'from_store_name':row['hospital_name'],
-                        'to_store_name': nearby_row['hospital_name'],
+                        'from_store': row['store_id'],
+                        'to_store': nearby_row['store_id'],
+                        'from_store_name':row['store_name'],
+                        'to_store_name': nearby_row['store_name'],
                         'brand':row['brand'],
                         'amount': amount_to_reallocate,
                         'recommendation': recommendation,
                         'profit': profit
                     })
-
+                   
                     # Update inventories
                     store_data.loc[index, 'inventory'] -= amount_to_reallocate
-                    store_data.loc[store_data['id'] == nearby_row['id'], 'inventory'] += amount_to_reallocate
+                    store_data.loc[store_data['store_id'] == nearby_row['store_id'], 'inventory'] += amount_to_reallocate
                     
                     # Break after one reallocation per store
                     break
