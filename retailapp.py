@@ -9,7 +9,7 @@ from sklearn.ensemble import RandomForestRegressor
 app = Flask(__name__)
 CORS(app)
 
-genai.configure(api_key='AIzaSyAFFuoy8Ru945iEx3VS1kFFjIyYJR5HLa4')
+genai.configure(api_key='AIzaSyD4Qxs3dVsX1krGQJVIkrzmTIFLm6NRVdg')
 
 def get_db_connection():
     conn = psycopg2.connect(
