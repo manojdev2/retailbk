@@ -1,6 +1,5 @@
 Flask==2.3.2                # For building the backend API
-pandas==2.0.3               # For handling Excel datasets
-openai==0.27.0              # For Generative AI (GPT) integration
+pandas==2.0.3               # For handling Excel datasets             # For Generative AI (GPT) integration
 xlrd==2.0.1                 # For reading Excel files
 statsmodels==0.14.0         # For demand forecasting (Exponential Smoothing)
 numpy==1.25.1               # Needed by statsmodels and general data manipulation
