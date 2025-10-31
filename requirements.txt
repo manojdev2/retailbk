@@ -9,3 +9,5 @@ psycopg2
 flask-cors
 google-generativeai
 googlemaps==4.10.0
+setuptools>=68.0.0
+wheel>=0.41.0
