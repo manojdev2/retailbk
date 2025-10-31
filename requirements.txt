@@ -1,22 +1,11 @@
-# --- Core Backend ---
-Flask==2.3.2
-flask-cors
-gunicorn==21.2.0
+Flask==2.3.2                # For building the backend API
+pandas==2.0.3               # For handling Excel datasets             # For Generative AI (GPT) integration
+xlrd==2.0.1                 # For reading Excel files
+statsmodels>=0.14.0         # For demand forecasting (Exponential Smoothing)
+numpy==1.25.1               # Needed by statsmodels and general data manipulation
+scikit-learn==1.3.0         # (Optional) For machine learning models, if required
+gunicorn==21.2.0            # For deploying the Flask app in production
 psycopg2
-
-# --- Data Handling ---
-pandas==2.0.3
-xlrd==2.0.1
-numpy==1.26.4                # ✅ Compatible with Python 3.13 and prebuilt wheels exist
-statsmodels>=0.14.0
-scikit-learn==1.3.0
-
-# --- AI & APIs ---
+flask-cors
 google-generativeai
 googlemaps==4.10.0
-
-# --- Build & Compatibility Fixes ---
-setuptools>=70.0.0           # ✅ Fixes 'pkgutil.ImpImporter' issue
-wheel>=0.44.0                # ✅ Ensures wheels are built cleanly
-build>=1.2.2.post1           # ✅ Adds modern PEP517 build backend support
-cython>=3.0.10               # ✅ Avoids numpy wheel build errors
