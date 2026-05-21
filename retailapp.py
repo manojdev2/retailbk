@@ -10,7 +10,7 @@ from sklearn.ensemble import RandomForestRegressor
 app = Flask(__name__)
 CORS(app)
 
-genai.configure(api_key='AIzaSyCn43FyMu0k4TpBrrXVo1KNRtPR1JuUoF4')
+genai.configure(api_key='AIzaSyDWrsxXxO_S89xRJk7QwKelyFHCGI1T-0A')
 gmaps = googlemaps.Client(key="AIzaSyDAUhNkL--7MVKHtlFuR3acwa7ED-cIoAU")
 
 def get_db_connection():
