@@ -56,7 +56,7 @@ def get_reallocation_recommendation(store_id, excess_inventory, demand):
         f"and a demand of {demand}, provide a stock reallocation recommendation."
     )
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-3.5-flash")
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
