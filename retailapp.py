@@ -15,9 +15,9 @@ gmaps = googlemaps.Client(key="AIzaSyDAUhNkL--7MVKHtlFuR3acwa7ED-cIoAU")
 
 def get_db_connection():
     conn = psycopg2.connect(
-        user="postgres.qzudlrfcsaagrxvugzot",
-        password="m6vuWFRSoHj2EHZe",  # Replace with your actual password
-        host="aws-0-ap-south-1.pooler.supabase.com",
+        user="postgres.awgupcysazlmzpsrgkxz",
+        password="pykPKDDZhPYjDoZY",
+        host="aws-1-ap-northeast-1.pooler.supabase.com",
         port=6543,
         dbname="postgres"
     )
