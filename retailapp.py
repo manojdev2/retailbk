@@ -1,19 +1,24 @@
 import os
+import math
 from flask import Flask, request, jsonify
 import pandas as pd
 import numpy as np
+import requests
 from flask_cors import CORS
 from google import genai
 import psycopg2
 from sqlalchemy import create_engine
-import googlemaps
 from sklearn.ensemble import RandomForestRegressor
 
 app = Flask(__name__)
 CORS(app)
 
 genai_client = genai.Client(api_key='AQ.Ab8RN6IyFS062yHHQoEzLqFIpwZpet22tjhVVUy48D82pe2xfQ')
-gmaps = googlemaps.Client(key="AIzaSyDUyyoQCBngveLtfNNWb-brGXqmY-Qb0hs")
+GMAPS_API_KEY = "AIzaSyDUyyoQCBngveLtfNNWb-brGXqmY-Qb0hs"
+
+# Google Maps Routes API (computeRoutes) — the current replacement for the
+# deprecated legacy Directions API used by the googlemaps client library.
+ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 
 # Models tried in order: primary first, lighter fallbacks if it fails (e.g. quota/availability).
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"]
@@ -82,56 +87,84 @@ def get_reallocation_recommendation(store_id, excess_inventory, demand):
     except Exception as e:
         return f"Error in recommendation: {str(e)}"
     
+COST_PER_KM = 2.0            # Transport cost per km per unit
+CARBON_PER_KM = 0.1          # kg CO2 per km per unit
+ROAD_WINDING_FACTOR = 1.3    # Straight-line -> approx road distance
+AVG_SPEED_KMPH = 40.0        # Assumed average driving speed for the estimate
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance between two lat/lon points, in kilometers."""
+    r = 6371.0  # Earth radius in km
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
+    return r * 2 * math.asin(math.sqrt(a))
+
+
+def _build_cost_payload(distance_km, travel_time_min, amount, polyline, estimated):
+    return {
+        'distance_km': distance_km,
+        'travel_time_min': travel_time_min,
+        'transport_cost': distance_km * COST_PER_KM * amount,
+        'carbon_footprint': distance_km * CARBON_PER_KM * amount,
+        'route_polyline': polyline,
+        'estimated': estimated,
+    }
+
+
+def estimate_route_and_cost(start_location, end_location, amount_to_reallocate):
+    """Fallback used when the Routes API is unavailable: straight-line distance
+    (scaled to approximate roads) and a time estimate from an assumed speed."""
+    straight = haversine_km(
+        start_location['lat'], start_location['lon'],
+        end_location['lat'], end_location['lon'],
+    )
+    distance_km = straight * ROAD_WINDING_FACTOR
+    travel_time_min = (distance_km / AVG_SPEED_KMPH) * 60
+    return _build_cost_payload(distance_km, travel_time_min, amount_to_reallocate, '', True)
+
+
 def calculate_route_and_cost(start_location, end_location, amount_to_reallocate):
+    """Driving distance/time via the Google Maps Routes API, with a haversine
+    fallback so the numbers are always meaningful even if the API call fails."""
     try:
-        directions_result = gmaps.directions(
-            (start_location['lat'], start_location['lon']),
-            (end_location['lat'], end_location['lon']),
-            mode="driving",
-            units="metric"
-        )
-
-        if directions_result and len(directions_result) > 0:
-            route = directions_result[0]
-            leg = route['legs'][0]
-            travel_distance = leg['distance']['value'] / 1000  # Distance in kilometers
-            travel_time = leg['duration']['value'] / 60  # Time in minutes
-
-            cost_per_km = 2.0  # Adjust based on your costs
-            transport_cost = travel_distance * cost_per_km * amount_to_reallocate
-
-            # Example carbon footprint calculation: 0.1 kg CO2 per km per unit
-            carbon_footprint = travel_distance * 0.1 * amount_to_reallocate
-
-            return {
-                'distance_km': travel_distance,
-                'travel_time_min': travel_time,
-                'transport_cost': transport_cost,
-                'carbon_footprint': carbon_footprint,
-                'route_polyline': route.get('overview_polyline', {}).get('points', '')
-            }
-        else:
-            # Assign default fallback values when no route is found
-            return {
-                'error': 'No route found',
-                'distance_km': 0,
-                'travel_time_min': 0,
-                'transport_cost': 0,
-                'carbon_footprint': 0,
-                'route_polyline': ''
-            }
-    except Exception as e:
-        # Return default values in case of any exception
-        return {
-            'error': f"Error calculating route: {str(e)}",
-            'distance_km': 0,
-            'travel_time_min': 0,
-            'transport_cost': 0,
-            'carbon_footprint': 0,
-            'route_polyline': ''
+        body = {
+            "origin": {"location": {"latLng": {
+                "latitude": start_location['lat'], "longitude": start_location['lon']}}},
+            "destination": {"location": {"latLng": {
+                "latitude": end_location['lat'], "longitude": end_location['lon']}}},
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_UNAWARE",
+            "units": "METRIC",
         }
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GMAPS_API_KEY,
+            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",
+        }
+        resp = requests.post(ROUTES_API_URL, json=body, headers=headers, timeout=10)
+        resp.raise_for_status()
+        routes = resp.json().get("routes", [])
 
-    
+        if routes:
+            route = routes[0]
+            distance_km = route.get("distanceMeters", 0) / 1000
+            # duration comes back as a string like "1234s".
+            travel_time_min = int(str(route.get("duration", "0s")).rstrip("s") or 0) / 60
+            polyline = route.get("polyline", {}).get("encodedPolyline", "")
+            if distance_km > 0:
+                return _build_cost_payload(
+                    distance_km, travel_time_min, amount_to_reallocate, polyline, False)
+
+        # No usable route returned -> fall back to an estimate.
+        return estimate_route_and_cost(start_location, end_location, amount_to_reallocate)
+    except Exception:
+        # Any API/network error -> fall back to an estimate rather than zeros.
+        return estimate_route_and_cost(start_location, end_location, amount_to_reallocate)
+
+
 @app.route('/api/reallocate_stock', methods=['POST'])
 def reallocate_stock():
     global store_data
@@ -176,6 +209,7 @@ def reallocate_stock():
                         'distance_km': route_info['distance_km'],
                         'carbon_footprint': route_info['carbon_footprint'],
                         'route_polyline': route_info['route_polyline'],
+                        'estimated': route_info.get('estimated', False),
                         'profit': profit
                     })
                    
