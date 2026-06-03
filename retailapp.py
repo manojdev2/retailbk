@@ -2,42 +2,63 @@ from flask import Flask, request, jsonify
 import pandas as pd
 import numpy as np
 from flask_cors import CORS
-import google.generativeai as genai
+from google import genai
 import psycopg2
+from sqlalchemy import create_engine
 import googlemaps
 from sklearn.ensemble import RandomForestRegressor
 
 app = Flask(__name__)
 CORS(app)
 
-genai.configure(api_key='AIzaSyDWrsxXxO_S89xRJk7QwKelyFHCGI1T-0A')
-gmaps = googlemaps.Client(key="AIzaSyDAUhNkL--7MVKHtlFuR3acwa7ED-cIoAU")
+genai_client = genai.Client(api_key='AQ.Ab8RN6IyFS062yHHQoEzLqFIpwZpet22tjhVVUy48D82pe2xfQ')
+gmaps = googlemaps.Client(key="AIzaSyDUyyoQCBngveLtfNNWb-brGXqmY-Qb0hs")
+
+# Models tried in order: primary first, lighter fallbacks if it fails (e.g. quota/availability).
+GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite"]
+
+def generate_content_with_fallback(prompt):
+    last_error = None
+    for model in GEMINI_MODELS:
+        try:
+            response = genai_client.models.generate_content(
+                model=model,
+                contents=prompt,
+            )
+            return response.text
+        except Exception as e:
+            last_error = e
+            continue
+    raise last_error
+
+DB_CONFIG = {
+    "user": "postgres.awgupcysazlmzpsrgkxz",
+    "password": "pykPKDDZhPYjDoZY",
+    "host": "aws-1-ap-northeast-1.pooler.supabase.com",
+    "port": 6543,
+    "dbname": "postgres",
+}
 
 def get_db_connection():
-    conn = psycopg2.connect(
-        user="postgres.awgupcysazlmzpsrgkxz",
-        password="pykPKDDZhPYjDoZY",
-        host="aws-1-ap-northeast-1.pooler.supabase.com",
-        port=6543,
-        dbname="postgres"
-    )
+    conn = psycopg2.connect(**DB_CONFIG)
     return conn
 
+# SQLAlchemy engine for pandas reads (pandas no longer supports raw DBAPI connections).
+db_engine = create_engine(
+    "postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}".format(**DB_CONFIG)
+)
+
 def get_store_data():
-    conn = get_db_connection()
     query = "SELECT store_id, location_x, location_y, inventory, demand, brand, store_name, price_per_unit FROM croma_inventory_data;"
-    store_data = pd.read_sql(query, conn)
-    conn.close()
+    store_data = pd.read_sql(query, db_engine)
     return store_data
 
 # Fetch Sales Data
 def fetch_sales_data():
-    conn = get_db_connection()
     query = '''
         SELECT * FROM sales_data
     '''
-    sales_data = pd.read_sql(query, conn)
-    conn.close()
+    sales_data = pd.read_sql(query, db_engine)
     return sales_data
 
 @app.route('/api/inventory', methods=['GET'])
@@ -56,9 +77,7 @@ def get_reallocation_recommendation(store_id, excess_inventory, demand):
         f"and a demand of {demand}, provide a stock reallocation recommendation."
     )
     try:
-        model = genai.GenerativeModel("gemini-3.5-flash")
-        response = model.generate_content(prompt)
-        return response.text
+        return generate_content_with_fallback(prompt)
     except Exception as e:
         return f"Error in recommendation: {str(e)}"
     
@@ -227,12 +246,10 @@ def get_stores():
     return jsonify(store_data.to_dict(orient='records'))
 
 def fetch_sales_data():
-    conn = get_db_connection()
     query = '''
         SELECT * FROM sales_data
     '''
-    sales_data = pd.read_sql(query, conn)
-    conn.close()
+    sales_data = pd.read_sql(query, db_engine)
     return sales_data
 
 @app.route('/api/get_sales_data', methods=['GET'])
